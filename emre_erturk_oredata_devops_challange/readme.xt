@@ -17,13 +17,13 @@ TURKCE OKUMAK ISTIYORSAN BENIOKU DOSYASINA GIT
 I will describe the steps I took to create a GKE cluster using Terraform.
 
 
-Step 1
+Step 1 Provider
 
 I created a provider.tf that defines the infrastructure that specifies which provider I will use with Terraform and which service it should interact with.
 In this case, I continued by specifying the platform as google and giving descriptive input/output.
 After making the necessary arrangements about the Google Storage Bucket to store the Terraform state, I determined the necessary provides versions.
 
-Step 2
+Step 2 VPC
 
 I created VPC with Terraform infrastructure. Here we could also create a Kubernetes Cluster using the existing VPC.
 Before we create a new VPC, we need to enable the compute API. To create a GKE Cluster, we can start building the VPC itself after enabling the container in google API.
@@ -38,7 +38,7 @@ When creating the Terraform infrastructure, we select false to determine whether
 By choosing this to false, we actually want to keep the default management rules.
 We specify dependencies between resources with the depends_on option.
 
-Step 3
+Step 3 Subnet 
 
 We create a special subnet according to the state of Kubernetes nodes.
 It is managed by Google from kubernetes control groups in GKE Cluster groups.
@@ -50,11 +50,11 @@ We enable private google ip. Virtual machines in this subnet without external ip
 Then we specify secondary IP ranges
 If we need to create a firewall to access other VMs in my Kubernetes VPC network, we can optionally use it on our Kubernetes nodes by specifying the secondary ip range.
 
-Step 4
+Step 4 Routuer
 
 We are creating a Router that will be used with the NAT gateway to allow VMs without public IP addresses to access the internet.
 
-Step 5
+Step 5 NAT
 
 First, we create a resource of type "google_compute_router_nat" and set its name to "nat". This resource contains a router name and specifying the zone (us-central1).
   source_subnetwork_ip_ranges_to_nat = "LIST_OF_SUBNETWORKS"
@@ -62,12 +62,12 @@ First, we create a resource of type "google_compute_router_nat" and set its name
 Specifies which resources are included in the NAT configuration and how they are retrieved,
 In the "subnetwork" block, we specify the specific resources of the subnets specified for NAT.
 
-Step 6
+Step 6 Firewall
 
 We don't need to manually create any firewalls for GKE, but I still configure a firewall with this firewall to allow ssh into the VPC.
 
 
-Step 7
+Step 7 Kubernetes
 
 A resource of type "google_container_cluster" is created and we set the name to "primary".
 The location of this cluster (us-central1-a),
@@ -87,7 +87,7 @@ determines whether custom nodes and custom endpoints are enabled or disabled.
 The variable "master_ipv4_cidr_block" specifies an IPV4 CIDR block for Kubernetes masters.
 
 
-Step 8
+Step 8 Node Pools
 
 Although I know that I can use the default service at this stage in Case, I still created a special service account to follow the apps.
 I specified how many nodes I wanted and after defining the cluster and account id, I determined the machine type.
