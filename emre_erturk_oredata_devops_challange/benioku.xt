@@ -1,0 +1,137 @@
+ $$$$$$\                            $$\            $$\               
+$$  __$$\                           $$ |           $$ |              
+$$ /  $$ | $$$$$$\   $$$$$$\   $$$$$$$ | $$$$$$\ $$$$$$\    $$$$$$\  
+$$ |  $$ |$$  __$$\ $$  __$$\ $$  __$$ | \____$$\\_$$  _|   \____$$\ 
+$$ |  $$ |$$ |  \__|$$$$$$$$ |$$ /  $$ | $$$$$$$ | $$ |     $$$$$$$ |
+$$ |  $$ |$$ |      $$   ____|$$ |  $$ |$$  __$$ | $$ |$$\ $$  __$$ |
+ $$$$$$  |$$ |      \$$$$$$$\ \$$$$$$$ |\$$$$$$$ | \$$$$  |\$$$$$$$ |
+ \______/ \__|       \_______| \_______| \_______|  \____/  \_______|
+  ___           ___             ___              
+ |   \ _____ __/ _ \ _ __ ___  / __|__ _ ___ ___ 
+ | |) / -_) V / (_) | '_ (_-< | (__/ _` (_-</ -_)
+ |___/\___|\_/ \___/| .__/__/  \___\__,_/__/\___|
+
+
+GO TO THE README IF YOU WANT TO READ IN ENGLISH
+
+
+1. Adım Provider
+
+Terraform ile hangi sağlayıcı kullanacığımı,  hangi hizmet ile etkileşime geçmesi gerektiğini belirten altyapıyı tanımlayanm bir provider.tf oluşturdum. 
+
+Bu case'de platformu google olarak belirterek açıklayıcı input/outpu vererek devam ettim.
+
+Terraform durumunu depolamak için Google Storage Bucket ile ilgili gerekli düzenlemeleri yaptıktan sonra gerekli provides versiyonlarını belirledim.
+
+
+2. Adım VPC
+
+Terraform altyapısı ile VPC oluşturdum. Burada mevcut VPC'yi kullanarak bir Kubernetes Cluster da oluşturabilirdik.
+Yeni bir VPC oluşturmadan önce compute API'yı etkinleştirmemiz gerek. Bir GKE Cluster oluşturmak için container google API'da etkinleştirdikten sonra VPC'in kendisini oluşturmaya başlayabiliriz.
+
+#resource "google_compute_network" "main" { .... }
+
+kaynak adı belirledikten sonra routing mode seçiyoruz. Regional ya da Global olmak üzere burada iki seçenekten birini tercih edebiliriz.
+
+Kendi subnetimizi terraform altyapısıyla oluşturmak istediğimiz için auto_create_subnetworks = false olarak belirliyoruz.
+mtu yani türkçesiyle maksimum iletim birimi değerini bayt cinsinden minimum olarak 1460 tercih ediyoruz. 
+Terraform altyapısını oluştururken ağ bölgesi için varsayılan yöneltme kurallarının oluşturulurken silinip silinmemesini belirlemek için false seçiyoruz.
+Bunu false seçerek aslında varsayılan yönetlme kurallarını aynen korumak istiyoruz. 
+depends_on seçeneği ile kaynaklar arasındakı bağımlılıklları belirtiyoruz.
+
+3. Adım Subnet 
+
+Kubernetes nodelarını yerleştirmek için özel bir alt ağ (subnet) oluşturuyoruz. 
+GKE Cluster kullandığımızda kubernetes control planlaması Google tarafından yönetilir.
+
+Spesifik name belirttmek daha iyidir daha sonrasında subnetin CIDR aralığını belirtiriz.
+Farklı bölgelerde alt ağlar oluşturabilirsiniz benim tercihim burada us-central1
+Daha önce oluşturduğumuz ağa burada referans sağlayarak devam ediyoruz. 
+Private google ip enable ediyoruz. Harici ip adresleri olmayan bu alt ağdaki sanal makineler Google API'lerine ve hizmetlerine erişebilir.
+Ardından ikincil IP aralıkları belirtiyoruz
+Kuberneteste VPC ağımdaki diğer VM'lere erişmek için bir güvenlik duvarı oluşturmamız gerekirse ikincil ip aralığı belirterek isteğe bağlı olarak Kubernetes nodelarımızda kullanabiliriz.
+
+4. Adım Routuer
+Genel IP adresleri olmayan VM'lerin internete erişmesine izin vermek için NAT ağ geçidi ile birlikte kullanılacak olan bir Router oluşturuyoruz. 
+
+5. Adım NAT
+
+ İlk olarak, "google_compute_router_nat" türünde bir kaynak oluşturuyor ve adını "nat" olarak ayarlıyoruz. Bu kaynak, bir router adını ve bölgenin (us-central1) belirlenmesini içermekte. 
+ source_subnetwork_ip_ranges_to_nat = "LIST_OF_SUBNETWORKS"
+  nat_ip_allocate_option  
+Hangi kaynakların NAT yapılandırmasına dahil edileceğini ve nasıl alınacağını belirtiyor, 
+"subnetwork" bloğunda ise NAT için belirlenen alt ağların belirli kaynaklarını belirliyoruz.
+
+6. Adım Firewall
+GKE için manuel olarak herhangi bir güvenlik duvarı oluşturmamız gerekmez fakat ben yine de bu güvenlik duvarı ile VPC içindeki ssh yapılmasına izin veren bir firewall yapılandırıyorum.
+
+7. Adım Kubernetes
+google_container_cluster" türünde bir kaynak oluşturulur ve adı "primary" olarak ayarlıyoruz.
+Bu clusterın, konumunu (us-central1-a),
+Default node pool'un kaldırılmasını, başlangıçta kaç adet node'un oluşturulacağını (1 adet oluşturduk), ağ ve alt ağ bağlantılarını (google_compute_network.main.self_link, google_compute_subnetwork.private.self_link), logging ve monitoring hizmetlerini, networking modunu (VPC_NATIVE) ve node'ların konumlarını (us-central1-b) ilk kod bloğumuzda belirliyoruz.
+
+addons_config bloğu, 
+Kubernetes eklentilerinin yapılandırmasını belirler. 
+"http_load_balancing" ve "horizontal_pod_autoscaling" bloğları, bu eklentilerin etkin veya devre dışı olmasını belirliyoruz.
+release_channel"  ile  kullanılacak olan Kubernetes sürüm kanalını belirledikten sonra kubernetes workload kimgliğimizi belirliyoruz.
+
+
+"ip_allocation_policy"  kod bloğumuzda ise, 
+Kubernetes kümesinde IP atama politikasını belirlemekteyiz.  Burada,
+Örneğin, "cluster_secondary_range_name" ve "services_secondary_range_name" değişkenleri, pod ve hizmetler için farklı bir IP aralığı kullanmasını belirler.
+"enable_private_nodes" ve "enable_private_endpoint" değişkenleri, 
+özel nodlar ve özel endpoint'lerin etkin veya devre dışı olmasını belirler. 
+"master_ipv4_cidr_block" değişkeni ise, Kubernetes master'ları için bir IPV4 CIDR bloğu belirler.
+
+
+8. Adım Node Pools
+
+Case'de bu aşama da default service kullanabileceğimi biliyor olmama rağmen ben yine de  uygulamaları takip etmek için özel bir hizmet hesabı (service account) oluşturdum.
+Kaç adet node istediğimi berirledim cluster ve account id tanımlaması yaptıktan sonra makine türünü belirledim.
+Daha sonra projemde hizmet hesabıma IAM Rolu tanımladım.
+Yönetim yapılandırmasının aynı kalmasını istediğim için true olarak belirledim ve ölçeklendirmede minimum ve maksimum node sayısını tanımladım
+
+buradan sonraki adımım da 
+
+___________________________________________________
+
+Terraformu bilgisayarımda çalıştırmak için uygulama kimlik bilgilendirmelerimi yani Gcloud auth yetkilendirmesi yaptıktan sonra
+
+Terraform init
+Terraform apply
+Google sağlayıcısını indirerer bucket kullanmak için Terraform arka ucunu başlatacak. Terraform'da tanımladığım tüm bu kaynakları gerçekten yaratmak için terraform Apply'ı çalıştırıyoruz.
+
+Localimizdeki appi Docker Build alıp docker tag ile tagliyoruz. Dockerı Push ettikten sonra 
+GCK Shell üzerinde kubectl edit deployment/podname şeklinde image değiştiriyoruz 
+
+
+kubectl apply -f {my_yaml_path}
+
+kubectl get ns
+ ======Kubernetes clusterindeki tüm Namespace'leri listeler. Bu komutun çıktısı, Namespace adı, status, ve creationTimestamp gibi bilgileri içerebilir. Bu komut, yöneticiler tarafından kullanılabilir.
+
+Bu komut ile clusterdeki namespace listesine bakabilir, özellikle bir namespace'in aktif olup olmadığını, ait olduğu projeyi kontrol edebilirsiniz.
+
+kubectl get pods -n staging
+======== Namespace'indeki tüm Pod'ları listeler. Bu komutun çıktısı, Pod adı, durumu, ve creationTimestamp gibi bilgileri içerebilir.
+Bu komut kullanılarak clusterdeki belirli bir namespace altındaki podların listesine bakabilirsiniz. Bu sayede ait olduğu namespace içerisinde hangi podların çalışıp çalışmadığını kontrol edebilirsiniz. Ayrıca çalışan podların detaylarına da bakabilirsiniz.
+
+
+kubectl exec -n staging -it gcloud-548d547b84-zdnv6 -- bash
+========= Kubernetes clusterindeki "staging" Namespace'inde çalışan "gcloud-548d547b84-zdnv6" adlı Pod'un içine bir Bash oturumu açar.
+
+Bu komut ile pod içinde "bash" shelline girersiniz. Bu şekilde pod içerisindeki dosyalara veya uygulamaya direk erişebilir, ayrıca uygulama içinde yaptığınız değişiklikleri direk test edebilirsiniz. '-n' seçeneği kullanılarak hangi namespace içerisindeki pod üzerinde çalışacağımızı belirtiyoruz. '-it' seçeneği ile pod içerisindeki uygulamayı interaktif olarak çalıştırıyoruz.
+
+execin icinde 
+		===== Google Cloud Storage (GCS) dosyalarının listesini görüntüler
+
+
+kubectl get sa -n staging
+=======komutu, Kubernetes clusterinde "staging" adlı Namespace içerisindeki tüm ServiceAccount'ları listeler. Bu komutun çıktısı ServiceAccount ismi, oluşturma zamanı gibi bilgileri içerebilir.
+
+
+
+
+
+
+
